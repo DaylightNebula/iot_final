@@ -1,14 +1,12 @@
 #include <Wire.h>
 
 unsigned long lastTime = 0;
-unsigned long lastGyroUpdate = 0;
-unsigned long tick_length = 0;
-unsigned long longest_length = 0;
 
 // angle tracking vars
 const int MPU6050_addr = 0x68;
-uint8_t wire_buffer[14];
 int16_t GyroZ;
+bool gyroReady = false;
+void setGyroReady() { gyroReady = true; }
 float angleZ = 0.00;
 float gyroZBias = 0.00;
 float q = 0.01;
@@ -17,11 +15,20 @@ float p = 0.10;
 float x = 0.00;
 float k = 0.00;
 
-// interupt handling
-bool gyroReady = false;
-void setGyroReady() { gyroReady = true; }
+// rotary encoder tracking vars
+const int numberEncoders = 4;
+const int rotaryInputPins[4] = { 4, 6, 8, 10 };
+const int rotaryClockPins[4] = { 3, 5, 7, 9 };
+int rotaryPositions[4] = { 0, 0, 0, 0 };
+bool rotaryStates[4] = { false, false, false, false };
 
 void setup() {
+  // setup rotary pings
+  for (int i = 0; i < numberEncoders; i++) {
+    pinMode(rotaryInputPins[i], INPUT);
+    pinMode(rotaryClockPins[i], INPUT);
+  }
+ 
   // setup gyroscope
   Wire.setClock(400000);
   Wire.begin();
@@ -54,11 +61,9 @@ void setup() {
   // attach mpu interupt
   attachInterrupt(digitalPinToInterrupt(2), setGyroReady, RISING);
 
-  // complete startup
+  // start serial
   Serial.begin(9600);
   delay(1000);
-
-  // calibrateGyroscope();
 
   // Calibrate GyroZ bias (assumes MPU6050 is stationary)
   long sum = 0;
@@ -73,58 +78,29 @@ void setup() {
     delay(2);
   }
   gyroZBias = sum / (float)samples;
-
-  lastTime = micros();
-  lastGyroUpdate = micros();
+  Serial.println(gyroZBias);
+ 
+  lastTime = millis();
 }
 
+uint8_t buffer[14];
+
 void loop() {
-  unsigned long time = micros();
-  tick_length = time - lastTime;
+  unsigned long time = millis();
+  unsigned long tick_length = time - lastTime;
   lastTime = time;
-  if (tick_length > longest_length) longest_length = tick_length;
 
   if (gyroReady) {
     gyroReady = false;
-    readGyroscope();
+    
+    // read gyro info
+    Wire.beginTransmission(MPU6050_addr);
+    Wire.write(0x3B);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU6050_addr, 14, true);
+    Wire.readBytes(buffer, 14);
+    GyroZ = buffer[12] << 8 | buffer[13];
   }
-
-  if (Serial.available()) {
-    while(Serial.available()) Serial.read();
-    // writeStdOutput();
-    writeBinOutput();
-  }
-}
-
-void calibrateGyroscope() {
-  unsigned long start_time = micros();
-  int samples = 0;
-  long sum = 0;
-
-  // pull gyroscope for a 1 second
-  while (micros() - start_time < 1000000) {
-    Serial.println(micros() - start_time);
-    if (gyroReady) {
-      gyroReady = false;
-      sum += readRawGyroscope();
-    }
-  }
-
-  // adjust z bias
-  gyroZBias = sum / (float) samples;
-}
-
-int16_t readRawGyroscope() {
-  Wire.beginTransmission(MPU6050_addr);
-  Wire.write(0x3B);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU6050_addr, 14, true);
-  Wire.readBytes(wire_buffer, 14);
-  return wire_buffer[12] << 8 | wire_buffer[13];
-}
-
-void readGyroscope() {
-  GyroZ = readRawGyroscope();
 
   // apply kalman filter
   p = p + q;
@@ -132,25 +108,42 @@ void readGyroscope() {
   x = x + k * (GyroZ - gyroZBias - x);
   p = (1 - k) * p;
 
-  unsigned long time = micros();
-  unsigned long last_gyro_length = time - lastGyroUpdate;
-  lastGyroUpdate = time;
-
   // calculate Z axis
-  float dt = last_gyro_length / 1000000.0;
+  float dt = tick_length / 1000.0;
   angleZ += x / 131.0 * dt;
+
+  // read all encoders
+  for (int i = 0; i < numberEncoders; i++)
+    updateEncoder(i);
+
+  // only read out when requested
+  if (Serial.available()) {
+    // clear read buffer
+    while (Serial.available()) Serial.read();
+
+    // print debug output
+    byte* angle_bytes = (byte*) &angleZ;
+    Serial.write(angle_bytes, 4);
+    byte* ne_bytes = (byte*) &numberEncoders;
+    Serial.write(ne_bytes, 4);
+    for (int pos : rotaryPositions) {
+      byte* pos_bytes = (byte*) &pos;
+      Serial.write(pos_bytes, 2);
+    }
+  }
 }
 
-void writeStdOutput() {
-  Serial.print("Tick length: ");
-  Serial.println(tick_length);
-  // delay(10);
-  // byte* tick_length_bytes = (byte*) &tick_length;
-  // Serial.write(tick_length_bytes, 8);
-}
+void updateEncoder(int idx) {
+  bool clk = digitalRead(rotaryClockPins[idx]);
+  bool dt = digitalRead(rotaryInputPins[idx]);
 
-void writeBinOutput() {
-  Serial.write((byte*) &tick_length, 4);
-  Serial.write((byte*) &longest_length, 4);
-  Serial.write((byte*) &angleZ, 4);
+  if (rotaryStates[idx] != clk) {
+    if (clk != dt) {
+      rotaryPositions[idx] ++;
+    } else {
+      rotaryPositions[idx] --;
+    }
+  }
+
+  rotaryStates[idx] = clk;
 }
