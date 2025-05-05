@@ -1,8 +1,35 @@
 use std::{mem::transmute_copy, time::Duration};
 
 use serialport::SerialPort;
+use uinput::{event::{absolute, controller}, Event};
+
+pub mod rotary_input;
 
 fn main() {
+    // create device
+    let mut device = uinput::default().unwrap()
+        .name("UInput Steering Wheel").unwrap()
+        .bus(0x0003).vendor(0x046D)
+        .product(0xC29B).version(0x0110)
+        .event(absolute::Position::X).unwrap()
+        .min(-900).max(900)
+        .fuzz(0).flat(0)
+        .event(absolute::Position::Y).unwrap()
+        .min(0).max(255)
+        .fuzz(0).flat(0)
+        .event(absolute::Position::Z).unwrap()
+        .min(0).max(255)
+        .fuzz(0).flat(0)
+        .event(absolute::Position::RX).unwrap()
+        .min(0).max(255)
+        .fuzz(0).flat(0)
+        .event(absolute::Wheel::Position).unwrap()
+        .min(-900).max(900)
+        .fuzz(0).flat(0)
+        .event(controller::Controller::All).unwrap()
+        .create().unwrap();
+    device.synchronize().unwrap();
+
     // get an active USB port
     let port_info = serialport::available_ports().expect("No ports found!")
         .into_iter()
@@ -18,6 +45,18 @@ fn main() {
 
     // wait for aduino to initialize
     std::thread::sleep(Duration::from_secs(2));
+
+    // send a bunch of inputs to prep uinput (IDK why I need to do this)
+    let _ = device.send(absolute::Wheel::Gas, 127);
+    let _ = device.send(absolute::Wheel::Gas, 0);
+    let _ = device.send(absolute::Wheel::Brake, 127);
+    let _ = device.send(absolute::Wheel::Brake, 0);
+    device.synchronize().unwrap();
+    let _ = device.send(Event::Controller(controller::Controller::DPad(controller::DPad::Up)), 0);
+    let _ = device.send(Event::Controller(controller::Controller::DPad(controller::DPad::Down)), 0);
+    let _ = device.send(Event::Controller(controller::Controller::DPad(controller::DPad::Left)), 0);
+    let _ = device.send(Event::Controller(controller::Controller::DPad(controller::DPad::Right)), 0);
+    device.synchronize().unwrap();
 
     loop {
         let _ = port.write(&[0x00]);
@@ -57,7 +96,14 @@ fn main() {
             print!(" | {:01}", input);
         });
 
-        println!();
+        // write steering input
+        device.position(
+            &absolute::Position::X, 
+            (angle * 10.0) as i32
+        ).unwrap();
+
+        // sync input device
+        device.synchronize().unwrap();
 
         // slow down
         std::thread::sleep(Duration::from_millis(4));
