@@ -1,5 +1,6 @@
 #include <Wire.h>
 
+// time trackers
 unsigned long lastTime = 0;
 unsigned long lastGyroUpdate = 0;
 unsigned long tick_length = 0;
@@ -17,11 +18,43 @@ float p = 0.10;
 float x = 0.00;
 float k = 0.00;
 
-// interupt handling
+// rotary encoder vars
+const int NUM_ENCODERS = 4;
+const int clockPins[4] = { 7, 8, 9, 10 };
+const int dataPins[4] = { 3, 4, 5, 6 };
+int encoderPositions[4] = { 0, 0, 0, 0 };
+bool encoderStates[4] = { false, false, false, false };
+
+// button vars
+const int NUM_BUTTONS = 6;
+const int buttonPins[6] = { A0, A1, A2, A3, 11, 12 };
+
+// interrupt handling
 bool gyroReady = false;
 void setGyroReady() { gyroReady = true; }
 
 void setup() {
+  // setup clock and data pins for rotary encoders
+  for (int i = 0; i < NUM_ENCODERS; i++) {
+    pinMode(clockPins[i], INPUT);
+    pinMode(dataPins[i], INPUT);
+  }
+
+  for (int i = 0; i < NUM_BUTTONS; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+  }
+
+  // setup PCINT interrupts
+  PCICR |= (1 << PCIE2);
+  PCMSK2 |= (1 << PCINT23);
+  PCMSK2 |= (1 << PCINT19);
+  PCMSK2 |= (1 << PCINT0);
+  PCMSK2 |= (1 << PCINT20);
+  PCMSK2 |= (1 << PCINT1);
+  PCMSK2 |= (1 << PCINT21);
+  PCMSK2 |= (1 << PCINT2);
+  PCMSK2 |= (1 << PCINT22);
+
   // setup gyroscope
   Wire.setClock(400000);
   Wire.begin();
@@ -55,10 +88,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(2), setGyroReady, RISING);
 
   // complete startup
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(1000);
-
-  // calibrateGyroscope();
 
   // Calibrate GyroZ bias (assumes MPU6050 is stationary)
   long sum = 0;
@@ -90,30 +121,33 @@ void loop() {
   }
 
   if (Serial.available()) {
-    while(Serial.available()) Serial.read();
-    // writeStdOutput();
+    while(Serial.available()) {
+      Serial.read();
+    }
+//     writeStdOutput();
     writeBinOutput();
   }
 }
 
-void calibrateGyroscope() {
-  unsigned long start_time = micros();
-  int samples = 0;
-  long sum = 0;
+ISR(PCINT2_vect) {
+  for (int i = 0; i < NUM_ENCODERS; i++) {
+    bool clk = digitalRead(clockPins[i]);
+    bool dt = digitalRead(dataPins[i]);
 
-  // pull gyroscope for a 1 second
-  while (micros() - start_time < 1000000) {
-    Serial.println(micros() - start_time);
-    if (gyroReady) {
-      gyroReady = false;
-      sum += readRawGyroscope();
+    if (clk != encoderStates[i]) {
+      if (dt != clk) {
+        encoderPositions[i]++;
+      } else {
+        encoderPositions[i]--;
+      }
+      encoderStates[i] = clk;
     }
   }
-
-  // adjust z bias
-  gyroZBias = sum / (float) samples;
 }
 
+/**
+ * Reads the raw gyroscope input from the Z axis
+ */
 int16_t readRawGyroscope() {
   Wire.beginTransmission(MPU6050_addr);
   Wire.write(0x3B);
@@ -123,6 +157,9 @@ int16_t readRawGyroscope() {
   return wire_buffer[12] << 8 | wire_buffer[13];
 }
 
+/**
+ * Read the gyroscope input and update the kalman filter and final rotation values.
+ */
 void readGyroscope() {
   GyroZ = readRawGyroscope();
 
@@ -141,16 +178,43 @@ void readGyroscope() {
   angleZ += x / 131.0 * dt;
 }
 
+/**
+ * Writes the standard (debug) output to the serial port.
+ */
 void writeStdOutput() {
-  Serial.print("Tick length: ");
-  Serial.println(tick_length);
-  // delay(10);
-  // byte* tick_length_bytes = (byte*) &tick_length;
-  // Serial.write(tick_length_bytes, 8);
+  Serial.print(tick_length);
+  Serial.print(" | ");
+  Serial.print(angleZ);
+
+  for (int i = 0; i < NUM_ENCODERS; i++) {
+    Serial.print(" | ");
+    Serial.print(encoderPositions[i]);
+  }
+  
+  Serial.println("");
 }
 
+/**
+ * Writes the binary output to the serial port.
+ */
 void writeBinOutput() {
+  // write header
+  Serial.write(255);
   Serial.write((byte*) &tick_length, 4);
   Serial.write((byte*) &longest_length, 4);
   Serial.write((byte*) &angleZ, 4);
+
+  // write encoders
+  Serial.write((byte*) &NUM_ENCODERS, 4);
+  for (int i = 0; i < NUM_ENCODERS; i++) {
+    int pos = encoderPositions[i];
+    Serial.write((byte*) &pos, 2);
+  }
+
+  Serial.write((byte*) &NUM_BUTTONS, 4); 
+  for (int i = 0; i < NUM_BUTTONS; i++) {
+    byte input = 0x01;
+    if (digitalRead(buttonPins[i])) input = 0x00;
+    Serial.write(input);
+  }
 }

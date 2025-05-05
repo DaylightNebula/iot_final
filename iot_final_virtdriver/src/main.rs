@@ -12,46 +12,52 @@ fn main() {
     let port_info = port_info.unwrap();
 
     // open port
-    let mut port = serialport::new(port_info.port_name, 9600)
+    let mut port = serialport::new(port_info.port_name, 115200)
         .timeout(Duration::from_millis(10))
         .open().expect("Failed to open port");
 
-    for _ in 0 .. 4 {
-        let _ = port.write(&[0x00]);
-        let _ = port.flush();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // wait for aduino to initialize
+    std::thread::sleep(Duration::from_secs(2));
 
     loop {
         let _ = port.write(&[0x00]);
-        let _ = port.flush();
+        
+        // wait until we have something to read
+        loop {
+            let byte = read::<u8, 1>(&mut port);
+            if byte == 255 { break }
+        }
 
         print!("\r");
-
-        // wait until we have something to read
-        while port.bytes_to_read().unwrap_or(0) < 12 {}
-        let total_bytes = port.bytes_to_read().unwrap_or(0);
 
         // read headers
         let tick_length = read::<u32, 4>(&mut port);
         let longest_length = read::<u32, 4>(&mut port);
-        print!("{:0.5} | {:05} | {:05}", total_bytes, tick_length, longest_length);
+        print!("{:0.5} | {:05} | {:05}", 3, tick_length, longest_length);
 
         // read inputs
         let angle = read::<f32, 4>(&mut port);
 
-        println!(" | {:>5.1}", angle);
+        print!(" | {:>5.1}", angle);
 
         // read encoders
-        // let num_encoders: i32 = unsafe { std::mem::transmute(read_bytes::<4>(&mut port)) };
-        // if num_encoders > 4 { continue }
-        // let mut encoders = Vec::<i16>::with_capacity(num_encoders as usize);
-        // for _ in 0 .. num_encoders {
-        //     let rotation: i16 = unsafe { std::mem::transmute(read_bytes::<2>(&mut port)) };
-        //     encoders.push(rotation);
-        // }
+        let num_encoders = read::<u32, 4>(&mut port);
+        print!(" | {:02}", num_encoders);
+        (0 .. num_encoders).for_each(|_idx| {
+            let position = read::<i16, 2>(&mut port);
+            print!(" | {:02}", position);
+        });
 
-        // println!("Angle {angle_z}, Encoders {encoders:?}");
+        // read buttons
+        let num_buttons = read::<u16, 2>(&mut port);
+        read::<u16, 2>(&mut port);
+        print!(" | {:02}", num_buttons);
+        (0 .. num_buttons).for_each(|_idx| {
+            let input = read::<u8, 1>(&mut port);
+            print!(" | {:01}", input);
+        });
+
+        println!();
 
         // slow down
         std::thread::sleep(Duration::from_millis(4));
