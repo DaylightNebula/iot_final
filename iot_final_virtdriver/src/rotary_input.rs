@@ -1,4 +1,4 @@
-use uinput::{Device, Event};
+use uinput::{event::controller::GamePad, Device, Event};
 
 pub struct RotaryInput {
     target: RotaryInputTarget,
@@ -9,7 +9,7 @@ pub struct RotaryInput {
 
 pub enum RotaryInputTarget {
     Button {
-        button: Event,
+        button: GamePad,
         cross_value: f32 
     },
     Axis {
@@ -45,7 +45,8 @@ impl RotaryInput {
                 let a = current > *cross_value;
                 let b = self.last > *cross_value;
                 if a != b {
-                    let _ = device.send(*button, if a { 255 } else { 0 });
+                    if a { let _ = device.press(button); }
+                    else { let _ = device.release(button); }
                 }
             },
             RotaryInputTarget::Axis { axis, flip } => {

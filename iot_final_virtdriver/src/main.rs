@@ -29,7 +29,16 @@ fn main() {
         .event(absolute::Wheel::Position).unwrap()
         .min(-900).max(900)
         .fuzz(0).flat(0)
-        .event(controller::Controller::All).unwrap()
+        .event(controller::GamePad::TR).unwrap()
+        .event(controller::GamePad::TR2).unwrap()
+        .event(controller::GamePad::TL).unwrap()
+        .event(controller::GamePad::TL2).unwrap()
+        .event(controller::GamePad::North).unwrap()
+        .event(controller::GamePad::South).unwrap()
+        .event(controller::GamePad::East).unwrap()
+        .event(controller::GamePad::West).unwrap()
+        .event(controller::GamePad::A).unwrap()
+        .event(controller::GamePad::B).unwrap()
         .create().unwrap();
     device.synchronize().unwrap();
 
@@ -63,8 +72,8 @@ fn main() {
 
     // build encoder inputs
     let mut encoder_inputs: [RotaryInput; 4] = [
-        RotaryInput::new(RotaryInputTarget::Button { button: Event::Controller(controller::Controller::GamePad(controller::GamePad::TL)), cross_value: 0.25 }, 0.0),
-        RotaryInput::new(RotaryInputTarget::Button { button: Event::Controller(controller::Controller::GamePad(controller::GamePad::TR)), cross_value: 0.25 }, 0.0),
+        RotaryInput::new(RotaryInputTarget::Button { button: controller::GamePad::TL, cross_value: 0.25 }, 0.0),
+        RotaryInput::new(RotaryInputTarget::Button { button: controller::GamePad::TR, cross_value: 0.25 }, 0.0),
         RotaryInput::new(RotaryInputTarget::Axis { axis: absolute::Position::Z.into(), flip: false }, 0.0),
         RotaryInput::new(RotaryInputTarget::Axis { axis: absolute::Position::Y.into(), flip: true }, 0.0),
     ];
@@ -121,7 +130,6 @@ fn main() {
             button_inputs[idx as usize].update(input > 0);
             if idx == 1 {
                 if button_inputs[idx as usize].was_released() {
-                    println!("\nWheel offset");
                     wheel_offset = angle;
                 }
             } else {
