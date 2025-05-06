@@ -146,7 +146,7 @@ fn main() {
         // write steering input
         device.position(
             &absolute::Position::X, 
-            ((angle - wheel_offset) * 10.0) as i32
+            ((angle - wheel_offset) * 7.0) as i32
         ).unwrap();
 
         // sync input device
