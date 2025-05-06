@@ -1,8 +1,11 @@
 use std::{mem::transmute_copy, time::Duration};
 
+use button_input::ButtonInput;
+use rotary_input::{RotaryInput, RotaryInputTarget};
 use serialport::SerialPort;
 use uinput::{event::{absolute, controller}, Event};
 
+pub mod button_input;
 pub mod rotary_input;
 
 fn main() {
@@ -58,6 +61,27 @@ fn main() {
     let _ = device.send(Event::Controller(controller::Controller::DPad(controller::DPad::Right)), 0);
     device.synchronize().unwrap();
 
+    // build encoder inputs
+    let mut encoder_inputs: [RotaryInput; 4] = [
+        RotaryInput::new(RotaryInputTarget::Button { button: Event::Controller(controller::Controller::GamePad(controller::GamePad::TL)), cross_value: 0.25 }, 0.0),
+        RotaryInput::new(RotaryInputTarget::Button { button: Event::Controller(controller::Controller::GamePad(controller::GamePad::TR)), cross_value: 0.25 }, 0.0),
+        RotaryInput::new(RotaryInputTarget::Axis { axis: absolute::Position::Z.into(), flip: false }, 0.0),
+        RotaryInput::new(RotaryInputTarget::Axis { axis: absolute::Position::Y.into(), flip: true }, 0.0),
+    ];
+
+    // build buttons
+    let mut button_inputs: [ButtonInput; 6] = [ButtonInput::default(); 6];
+    let button_targets: [Event; 6] = [
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::North)),
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::South)),
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::East)),
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::West)),
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::A)),
+        Event::Controller(controller::Controller::GamePad(controller::GamePad::B)),
+    ];
+
+    let mut wheel_offset = 0.0;
+
     loop {
         let _ = port.write(&[0x00]);
         
@@ -77,13 +101,14 @@ fn main() {
         // read inputs
         let angle = read::<f32, 4>(&mut port);
 
-        print!(" | {:>5.1}", angle);
+        print!(" | {:>5.1}", angle - wheel_offset);
 
         // read encoders
         let num_encoders = read::<u32, 4>(&mut port);
         print!(" | {:02}", num_encoders);
-        (0 .. num_encoders).for_each(|_idx| {
+        (0 .. num_encoders).for_each(|idx| {
             let position = read::<i16, 2>(&mut port);
+            encoder_inputs[idx as usize].update(&mut device, position);
             print!(" | {:02}", position);
         });
 
@@ -91,15 +116,29 @@ fn main() {
         let num_buttons = read::<u16, 2>(&mut port);
         read::<u16, 2>(&mut port);
         print!(" | {:02}", num_buttons);
-        (0 .. num_buttons).for_each(|_idx| {
+        (0 .. num_buttons).for_each(|idx| {
             let input = read::<u8, 1>(&mut port);
+            button_inputs[idx as usize].update(input > 0);
+            if idx == 1 {
+                if button_inputs[idx as usize].was_released() {
+                    println!("\nWheel offset");
+                    wheel_offset = angle;
+                }
+            } else {
+                if button_inputs[idx as usize].was_pressed() || button_inputs[idx as usize].was_released() {
+                    let _ = device.send(
+                        button_targets[idx as usize], 
+                        if button_inputs[idx as usize].was_pressed() { 255 } else { 0 }
+                    );
+                }
+            }
             print!(" | {:01}", input);
         });
 
         // write steering input
         device.position(
             &absolute::Position::X, 
-            (angle * 10.0) as i32
+            ((angle - wheel_offset) * 10.0) as i32
         ).unwrap();
 
         // sync input device
